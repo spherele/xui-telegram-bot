@@ -1,0 +1,27 @@
+[Unit]
+Description=3x-ui Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=xuibot
+WorkingDirectory=/opt/xui-telegram-bot
+# Node 22 лежит в папке бота (системный node не трогаем); если ставили Node 22 глобально — /usr/bin/node
+ExecStart=/opt/xui-telegram-bot/node/bin/node --env-file=.env src/index.js
+Restart=always
+RestartSec=5
+# Корректная остановка: бот ловит SIGTERM и сохраняет состояние
+KillSignal=SIGTERM
+TimeoutStopSec=15
+Environment=NODE_ENV=production
+
+# Небольшая изоляция
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/xui-telegram-bot/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
