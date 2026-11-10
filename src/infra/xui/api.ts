@@ -96,6 +96,16 @@ export class XuiApi {
     await this.http.post(`/panel/api/clients/del/${enc(email)}`);
   }
 
+  /** Подключить клиента к дополнительным инбаундам (ключи и трафик общие). */
+  async attach(email: string, inboundIds: number[]): Promise<void> {
+    if (inboundIds.length) await this.http.post(`/panel/api/clients/${enc(email)}/attach`, { inboundIds });
+  }
+
+  /** Отключить клиента от инбаундов, не удаляя его. */
+  async detach(email: string, inboundIds: number[]): Promise<void> {
+    if (inboundIds.length) await this.http.post(`/panel/api/clients/${enc(email)}/detach`, { inboundIds });
+  }
+
   async resetTraffic(email: string): Promise<void> {
     await this.http.post(`/panel/api/clients/resetTraffic/${enc(email)}`);
   }

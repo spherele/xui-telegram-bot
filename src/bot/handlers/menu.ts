@@ -1,5 +1,5 @@
 // Навигация по меню: /start и кнопки панели.
-import { CB, CB_RE, isDetachedCallback } from '../callbacks.js';
+import { CB, CB_RE, decodePlan, isDetachedCallback } from '../callbacks.js';
 import type { View } from '../panel.js';
 import { group, type HandlerDeps, type PrivateComposer } from './types.js';
 import { ignoreError } from '../../lib/async.js';
@@ -38,7 +38,11 @@ export function registerMenu(pm: PrivateComposer, { nav, panels }: HandlerDeps):
 
   // магазин
   button(CB.tariffs, () => nav.tariffs());
-  button(CB_RE.tariff, (uid, m) => nav.chooseTarget(uid, Number(group(m, 1))));
-  button(CB_RE.pay, (uid, m) => nav.pay(uid, Number(group(m, 1)), group(m, 2) === 'new' ? null : group(m, 2)));
+  button(CB_RE.plan, (uid, m) => nav.chooseTarget(uid, decodePlan(group(m, 1), group(m, 2))));
+  button(CB_RE.customTerm, (_uid, m) => nav.customTerm(Number(group(m, 1))));
+  button(CB_RE.pay, (uid, m) =>
+    nav.pay(uid, decodePlan(group(m, 1), group(m, 2)), group(m, 3) === 'new' ? null : group(m, 3)),
+  );
+  button(CB.toggleWhitelist, (uid) => nav.toggleWhitelist(uid));
   button(CB.payCancel, (uid) => nav.cancelPayment(uid));
 }

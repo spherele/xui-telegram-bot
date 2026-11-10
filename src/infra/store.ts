@@ -1,6 +1,7 @@
 // Состояние бота в JSON-файле (запись атомарная, с отложенным сохранением).
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { monthsIn } from '../domain/rules.js';
 import type { Order, PendingPayment, TelegramId } from '../domain/types.js';
 
 export interface PanelRef {
@@ -17,10 +18,35 @@ export interface State {
 }
 
 /** Заявка из старых версий: поля, появившиеся позже, могут отсутствовать. */
-type LegacyOrder = Omit<Order, 'adminMsgs' | 'fileUid' | 'fileInfo' | 'comment'> &
-  Partial<Pick<Order, 'adminMsgs' | 'fileUid' | 'fileInfo' | 'comment'>>;
+type LateFields = 'adminMsgs' | 'fileUid' | 'fileInfo' | 'comment' | 'purchase' | 'whitelist' | 'amount';
+type LegacyOrder = Omit<Order, LateFields> &
+  Partial<Pick<Order, LateFields>> & {
+    /** до «своего срока»: тариф с ценой строкой */
+    tariff?: { name: string; days: number; price: string | number; gb: number };
+  };
 
-const upgradeOrder = (o: LegacyOrder): Order => ({ adminMsgs: [], fileUid: null, fileInfo: null, comment: null, ...o });
+function upgradeOrder({ tariff, ...o }: LegacyOrder): Order {
+  const purchase = o.purchase ?? {
+    name: tariff?.name ?? '?',
+    days: tariff?.days ?? 0,
+    months: monthsIn(tariff?.days ?? 30),
+    price: Number(tariff?.price) || 0,
+    gb: tariff?.gb ?? 0,
+  };
+  return {
+    adminMsgs: [],
+    fileUid: null,
+    fileInfo: null,
+    comment: null,
+    whitelist: false,
+    amount: purchase.price,
+    ...o,
+    purchase,
+  };
+}
+
+/** Ожидание оплаты старого формата (без purchase) просто сбрасываем — пользователь выберет заново. */
+const isCurrentPending = (p: Partial<PendingPayment>): p is PendingPayment => !!p.purchase;
 
 const mapValues = <A, B>(r: Record<string, A>, fn: (a: A) => B): Record<string, B> =>
   Object.fromEntries(Object.entries(r).map(([k, v]) => [k, fn(v)]));
@@ -41,10 +67,18 @@ export class StateStore {
   async load(): Promise<void> {
     if (!this.file) return;
     try {
-      const raw = JSON.parse(await readFile(this.file, 'utf8')) as Partial<Omit<State, 'orders'>> & {
+      const raw = JSON.parse(await readFile(this.file, 'utf8')) as Partial<Omit<State, 'orders' | 'pending'>> & {
         orders?: Record<string, LegacyOrder>;
+        pending?: Record<string, Partial<PendingPayment>>;
       };
-      this.data = { ...empty(), ...raw, orders: mapValues(raw.orders ?? {}, upgradeOrder) };
+      this.data = {
+        ...empty(),
+        ...raw,
+        orders: mapValues(raw.orders ?? {}, upgradeOrder),
+        pending: Object.fromEntries(
+          Object.entries(raw.pending ?? {}).filter(([, p]) => isCurrentPending(p)),
+        ) as State['pending'],
+      };
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT')
         console.warn('Не удалось прочитать состояние:', (e as Error).message);

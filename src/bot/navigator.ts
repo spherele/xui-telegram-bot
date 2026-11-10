@@ -1,5 +1,5 @@
 // Контроллеры экранов: сервис → экран. Ловят ошибки панели и показывают их одинаково.
-import type { Client, TelegramId } from '../domain/types.js';
+import type { Client, Plan, TelegramId } from '../domain/types.js';
 import type { AccountService } from '../services/accounts.js';
 import type { StatusService } from '../services/status.js';
 import { hashKey } from './callbacks.js';
@@ -104,19 +104,23 @@ export class Navigator {
     return shop.tariffsView(this.ui, notice);
   }
 
-  chooseTarget(uid: TelegramId, index: number): Promise<View> {
+  customTerm(months: number): View {
+    return shop.customTermView(this.ui, months);
+  }
+
+  chooseTarget(uid: TelegramId, plan: Plan): Promise<View> {
     return this.safe(async () => {
       const own = await this.accounts.mine(uid);
-      return own.length ? shop.chooseTargetView(this.ui, index, own) : this.pay(uid, index, null);
+      return own.length ? shop.chooseTargetView(this.ui, plan, own) : this.pay(uid, plan, null);
     });
   }
 
   /** targetHash — хэш email продлеваемой подписки; null — новая. */
-  pay(uid: TelegramId, index: number, targetHash: string | null): Promise<View> {
+  pay(uid: TelegramId, plan: Plan, targetHash: string | null): Promise<View> {
     return this.safe(async () => {
       const target = targetHash ? await this.own(uid, targetHash) : null;
       if (targetHash && !target) return this.tariffs('🤷 Подписка для продления не найдена.');
-      const r = await this.ui.shop.startPayment(uid, index, target?.email ?? null);
+      const r = await this.ui.shop.startPayment(uid, plan, target?.email ?? null);
       switch (r.kind) {
         case 'ok':
           return shop.paymentView(this.ui, r.pending);
@@ -128,6 +132,11 @@ export class Navigator {
           return this.tariffs();
       }
     });
+  }
+
+  toggleWhitelist(uid: TelegramId): View {
+    const p = this.ui.shop.toggleWhitelist(uid);
+    return p ? shop.paymentView(this.ui, p) : this.tariffs('⏳ Время на оплату вышло — выберите тариф заново.');
   }
 
   cancelPayment(uid: TelegramId): Promise<View> {

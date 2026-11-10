@@ -68,6 +68,21 @@ export class ClientRepository {
     this.invalidate();
   }
 
+  /** Привести набор инбаундов клиента к нужному: прикрепить недостающие, открепить лишние. */
+  async setInbounds(email: string, current: readonly number[], wanted: readonly number[]): Promise<void> {
+    const have = new Set(current);
+    const want = new Set(wanted);
+    await this.api.attach(
+      email,
+      wanted.filter((id) => !have.has(id)),
+    );
+    await this.api.detach(
+      email,
+      current.filter((id) => !want.has(id)),
+    );
+    this.invalidate();
+  }
+
   async resetTraffic(email: string): Promise<void> {
     await this.api.resetTraffic(email);
     this.invalidate();

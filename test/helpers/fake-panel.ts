@@ -67,6 +67,8 @@ const nginx404 = () => res(404, '<html lang="en">404 Not Found</html>');
 export class FakePanel {
   rows: Row[];
   traffic = new Map<string, { up: number; down: number }>();
+  /** email → инбаунды клиента; по умолчанию [1, 2, 3] (3 — white-list в тестах). */
+  inboundsOf = new Map<string, number[]>();
   inbounds = [
     { id: 1, remark: 'RU', enable: true },
     { id: 2, remark: 'DE', enable: false },
@@ -107,6 +109,10 @@ export class FakePanel {
     );
   }
 
+  clientInbounds(email: string): number[] {
+    return this.inboundsOf.get(email) ?? [1, 2, 3];
+  }
+
   find(email: string): Row | undefined {
     return this.rows.find((r) => r.email === email);
   }
@@ -139,7 +145,7 @@ export class FakePanel {
 
     const view = (r: Row) => ({
       ...r,
-      inboundIds: [1, 2, 3],
+      inboundIds: this.clientInbounds(r.email),
       traffic: { ...(this.traffic.get(r.email) ?? { up: 0, down: 0 }), enable: true },
     });
     const m = (re: RegExp) => re.exec(path)?.[1];
@@ -160,7 +166,7 @@ export class FakePanel {
 
     if ((email = m(/^\/panel\/api\/clients\/get\/(.+)$/))) {
       const r = this.find(decodeURIComponent(email));
-      return r ? ok({ client: r, inboundIds: [1, 2, 3], externalLinks: [] }) : fail('not found');
+      return r ? ok({ client: r, inboundIds: this.clientInbounds(r.email), externalLinks: [] }) : fail('not found');
     }
     if ((email = m(/^\/panel\/api\/clients\/update\/(.+)$/))) {
       email = decodeURIComponent(email);
@@ -174,10 +180,24 @@ export class FakePanel {
       return ok(null);
     }
     if (path === '/panel/api/clients/add') {
-      const c = (body as { client: Row & { id: string } }).client;
+      const { client: c, inboundIds } = body as { client: Row & { id: string }; inboundIds: number[] };
       if (this.find(c.email)) return fail('email exists');
+      if (!inboundIds.length) return fail('at least one inbound required');
       const { id: uuid, ...rest } = c;
       this.rows.push({ ...(rest as unknown as Row), id: this.rows.length + 1, uuid });
+      this.inboundsOf.set(c.email, [...inboundIds]);
+      return ok(null);
+    }
+    const attach = /^\/panel\/api\/clients\/(.+)\/(attach|detach)$/.exec(path);
+    if (attach) {
+      const who = decodeURIComponent(attach[1]!);
+      if (!this.find(who)) return fail('not found');
+      const ids = (body as { inboundIds: number[] }).inboundIds;
+      const cur = this.clientInbounds(who);
+      this.inboundsOf.set(
+        who,
+        attach[2] === 'attach' ? [...new Set([...cur, ...ids])] : cur.filter((id) => !ids.includes(id)),
+      );
       return ok(null);
     }
     if ((email = m(/^\/panel\/api\/clients\/del\/(.+)$/))) {

@@ -32,17 +32,33 @@ export interface Client {
 export interface Tariff {
   name: string;
   days: number;
-  /** Цена как её задал админ («150», «1 490»). */
-  price: string;
+  /** Цена в валюте магазина. */
+  price: number;
   /** 0 — безлимит. */
   gb: number;
 }
 
-/** Пользователь выбрал тариф и должен прислать чек. */
+/** Что выбрал пользователь: готовый тариф или свой срок в месяцах. */
+export type Plan = { kind: 'tariff'; index: number } | { kind: 'custom'; months: number };
+
+/** Покупка с посчитанными параметрами — то, что оплачивается и выполняется. */
+export interface Purchase {
+  name: string;
+  days: number;
+  /** Сколько месяцев — для помесячной доплаты (white-list). */
+  months: number;
+  /** Базовая цена без доплат. */
+  price: number;
+  gb: number;
+}
+
+/** Пользователь выбрал, что покупает, и должен прислать чек. */
 export interface PendingPayment {
-  tariff: Tariff;
+  purchase: Purchase;
   /** email продлеваемого клиента; null — новая подписка. */
   target: string | null;
+  /** Подключить white-list (доплата за каждый месяц). */
+  whitelist: boolean;
   at: number;
 }
 
@@ -58,8 +74,11 @@ export interface Order {
   uid: TelegramId;
   name: string;
   username: string | null;
-  tariff: Tariff;
+  purchase: Purchase;
   target: string | null;
+  whitelist: boolean;
+  /** Итоговая сумма к оплате, с доплатами. */
+  amount: number;
   status: OrderStatus;
   createdAt: number;
   fileUid: string | null;

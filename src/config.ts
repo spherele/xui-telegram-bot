@@ -1,10 +1,23 @@
 // Конфигурация из переменных окружения — единственное место, где читается process.env.
 import type { Tariff } from './domain/types.js';
 
+export interface WhitelistConfig {
+  /** id инбаундов white-list; пусто — опция выключена. */
+  inboundIds: number[];
+  /** Доплата за месяц. */
+  monthPrice: number;
+  name: string;
+}
+
 export interface ShopConfig {
   tariffs: Tariff[];
   currency: string;
   paymentDetails: string;
+  /** Цена месяца для «своего срока»; 0 — свой срок выключен. */
+  monthPrice: number;
+  customMaxMonths: number;
+  whitelist: WhitelistConfig;
+  /** id инбаундов для новых клиентов; пусто — все включённые (white-list — только по опции). */
   inboundIds: number[];
   limitIp: number;
   group: string;
@@ -55,6 +68,15 @@ function int(env: Env, name: string, def: number): number {
   return v && Number.isFinite(n) ? n : def;
 }
 
+function ids(v: string): number[] {
+  return list(v, ',')
+    .map(Number)
+    .filter((n) => Number.isInteger(n) && n > 0);
+}
+
+/** "1 490" / "1490.00" → 1490 */
+const money = (v: string): number => Number(v.replace(/[\s\u00a0]/g, '').replace(',', '.'));
+
 const list = (v: string, sep: string | RegExp): string[] =>
   v
     .split(sep)
@@ -68,8 +90,8 @@ const list = (v: string, sep: string | RegExp): string[] =>
 export function parseTariffs(raw: string): Tariff[] {
   return list(raw, ';').map((s) => {
     const [name = '', days = '', price = '', gb = ''] = s.split('|').map((x) => x.trim());
-    if (!name || !(Number(days) > 0) || !price) throw new Error(`Неверный тариф в TARIFFS: "${s}"`);
-    return { name, days: Number(days), price, gb: Number(gb) || 0 };
+    if (!name || !(Number(days) > 0) || !(money(price) > 0)) throw new Error(`Неверный тариф в TARIFFS: "${s}"`);
+    return { name, days: Number(days), price: money(price), gb: Number(gb) || 0 };
   });
 }
 
@@ -85,6 +107,11 @@ export function parseNodeNames(raw: string): Record<string, string> {
 
 export function loadConfig(env: Env = process.env): Config {
   const apiToken = str(env, 'API_TOKEN') || null;
+  const tariffs = parseTariffs(str(env, 'TARIFFS'));
+  // цена месяца: MONTH_PRICE или цена 30-дневного тарифа
+  const monthPrice = str(env, 'MONTH_PRICE')
+    ? money(str(env, 'MONTH_PRICE'))
+    : (tariffs.find((t) => t.days === 30)?.price ?? 0);
   return {
     botToken: req(env, 'BOT_TOKEN'),
     panel: {
@@ -109,12 +136,17 @@ export function loadConfig(env: Env = process.env): Config {
       intervalMin: int(env, 'NOTIFY_INTERVAL_MIN', 60),
     },
     shop: {
-      tariffs: parseTariffs(str(env, 'TARIFFS')),
+      tariffs,
       currency: str(env, 'CURRENCY') || '₽',
       paymentDetails: str(env, 'PAYMENT_DETAILS').replace(/\\n/g, '\n'),
-      inboundIds: list(str(env, 'NEW_CLIENT_INBOUNDS'), ',')
-        .map(Number)
-        .filter((n) => n > 0),
+      monthPrice: Number.isFinite(monthPrice) && monthPrice > 0 ? monthPrice : 0,
+      customMaxMonths: int(env, 'CUSTOM_MAX_MONTHS', 12),
+      whitelist: {
+        inboundIds: ids(str(env, 'WHITELIST_INBOUNDS')),
+        monthPrice: money(str(env, 'WHITELIST_PRICE') || '150'),
+        name: str(env, 'WHITELIST_NAME') || 'White-list',
+      },
+      inboundIds: ids(str(env, 'NEW_CLIENT_INBOUNDS')),
       limitIp: int(env, 'NEW_CLIENT_LIMIT_IP', 0),
       group: str(env, 'NEW_CLIENT_GROUP'),
     },

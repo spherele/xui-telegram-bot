@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseNodeNames, parseTariffs } from '../../src/config.js';
-import { alertsFor, clientState, DAY_MS, extendedExpiry } from '../../src/domain/rules.js';
+import {
+  alertsFor,
+  clientState,
+  customPurchase,
+  DAY_MS,
+  extendedExpiry,
+  inboundsWith,
+  monthsIn,
+  purchaseTotal,
+  tariffPurchase,
+} from '../../src/domain/rules.js';
 import type { Client, Tariff } from '../../src/domain/types.js';
 import { normalizeTgUrl } from '../../src/bot/ui/format.js';
 
@@ -22,7 +32,7 @@ const client = (o: Partial<Client> = {}): Client => ({
   inbounds: [],
   ...o,
 });
-const month: Tariff = { name: 'm', days: 30, price: '1', gb: 0 };
+const month: Tariff = { name: 'm', days: 30, price: 1, gb: 0 };
 const now = 1_800_000_000_000;
 
 test('состояние клиента', () => {
@@ -50,8 +60,8 @@ test('уведомления', () => {
 
 test('разбор конфига', () => {
   assert.deepEqual(parseTariffs('1 месяц|30|150;Год|365|1400|500'), [
-    { name: '1 месяц', days: 30, price: '150', gb: 0 },
-    { name: 'Год', days: 365, price: '1400', gb: 500 },
+    { name: '1 месяц', days: 30, price: 150, gb: 0 },
+    { name: 'Год', days: 365, price: 1400, gb: 500 },
   ]);
   assert.throws(() => parseTariffs('плохой|x|1'), /Неверный тариф/);
   assert.deepEqual(parseNodeNames('germany=🇩🇪 Германия;🇳🇱 Нидерланды'), {
@@ -60,4 +70,20 @@ test('разбор конфига', () => {
   });
   assert.equal(normalizeTgUrl('https://t.me/@callme'), 'https://t.me/callme');
   assert.equal(normalizeTgUrl('@callme'), 'https://t.me/callme');
+});
+
+test('свой срок и доплата за white-list', () => {
+  assert.deepEqual(customPurchase(4, 200), { name: '4 мес.', days: 120, months: 4, price: 800, gb: 0 });
+  assert.equal(monthsIn(30), 1);
+  assert.equal(monthsIn(90), 3);
+  assert.equal(monthsIn(365), 12);
+  const year = tariffPurchase({ name: 'Год', days: 365, price: 2000, gb: 0 });
+  assert.equal(purchaseTotal(year, false, 150), 2000);
+  assert.equal(purchaseTotal(year, true, 150), 2000 + 12 * 150);
+});
+
+test('инбаунды с white-list и без', () => {
+  assert.deepEqual(inboundsWith([2, 3, 5, 13], [5], false), [2, 3, 13]);
+  assert.deepEqual(inboundsWith([2, 3, 13], [5], true), [2, 3, 13, 5]);
+  assert.deepEqual(inboundsWith([2, 5], [5], true), [2, 5]);
 });

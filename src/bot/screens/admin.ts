@@ -6,6 +6,7 @@ import { CB } from '../callbacks.js';
 import type { View } from '../panel.js';
 import { card, esc, hint, screen, title } from '../ui/format.js';
 import type { Ui } from './common.js';
+import * as shop from './shop.js';
 
 const menuKb = () => new InlineKeyboard().text('« Меню', CB.home);
 const out = (text: string): View => ({ text, keyboard: menuKb() });
@@ -57,7 +58,7 @@ export function openOrdersView(ui: Ui, orders: Order[]): View {
       title('🧾', `Ждут проверки: ${orders.length}`),
       orders
         .slice(-20)
-        .map((o) => `№${o.id} · ${esc(o.name)} · ${esc(o.tariff.name)} — ${esc(ui.shop.price(o.tariff))}`)
+        .map((o) => shop.openOrderLine(ui, o))
         .join('\n'),
       hint('Подтвердить или отклонить — кнопками в сообщении с чеком.'),
     ),

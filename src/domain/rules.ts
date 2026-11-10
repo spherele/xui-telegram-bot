@@ -1,5 +1,5 @@
 // Чистые бизнес-правила: без I/O, легко тестируются.
-import type { Client, Tariff } from './types.js';
+import type { Client, Purchase, Tariff } from './types.js';
 
 export const DAY_MS = 86_400_000;
 export const GB = 1024 ** 3;
@@ -17,15 +17,42 @@ export function clientState(c: Client, now = Date.now()): ClientState {
 
 export const isActive = (c: Client, now = Date.now()): boolean => clientState(c, now) === 'active';
 
-/** Новый срок при продлении на тариф. */
-export function extendedExpiry(current: number, tariff: Tariff, now = Date.now()): number {
-  const add = tariff.days * DAY_MS;
+type Duration = Pick<Purchase, 'days'>;
+type Volume = Pick<Purchase, 'gb'>;
+
+/** Новый срок при продлении. */
+export function extendedExpiry(current: number, p: Duration, now = Date.now()): number {
+  const add = p.days * DAY_MS;
   if (current > 0) return Math.max(current, now) + add; // истёкшая — от сегодня
   if (current < 0) return current - add; // срок ещё не начался — добавляем длительность
   return 0; // бессрочная остаётся бессрочной
 }
 
-export const tariffBytes = (t: Tariff): number => (t.gb > 0 ? t.gb * GB : 0);
+export const purchaseBytes = (p: Volume): number => (p.gb > 0 ? p.gb * GB : 0);
+
+/** Месяцев в сроке — для помесячных доплат: 30 дн. → 1, 90 → 3, 365 → 12. */
+export const monthsIn = (days: number): number => Math.max(1, Math.round(days / 30));
+
+export const tariffPurchase = (t: Tariff): Purchase => ({ ...t, months: monthsIn(t.days) });
+
+export const customPurchase = (months: number, monthPrice: number): Purchase => ({
+  name: `${months} мес.`,
+  days: months * 30,
+  months,
+  price: months * monthPrice,
+  gb: 0,
+});
+
+/** Сумма к оплате: базовая цена + доплата за white-list за каждый месяц. */
+export const purchaseTotal = (p: Purchase, whitelist: boolean, whitelistMonthPrice: number): number =>
+  p.price + (whitelist ? whitelistMonthPrice * p.months : 0);
+
+/** Инбаунды подписки после покупки: white-list добавляется или убирается, остальное не трогаем. */
+export function inboundsWith(base: readonly number[], whitelistIds: readonly number[], whitelist: boolean): number[] {
+  const wl = new Set(whitelistIds);
+  const rest = base.filter((id) => !wl.has(id));
+  return whitelist ? [...rest, ...whitelistIds] : rest;
+}
 
 // ---------- уведомления ----------
 

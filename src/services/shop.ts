@@ -1,11 +1,20 @@
-// Магазин: тариф → ожидание чека → заявка → решение админа → создание/продление клиента.
+// Магазин: тариф или свой срок (+ white-list) → ожидание чека → заявка → решение админа
+// → создание или продление клиента в панели.
 import type { ShopConfig } from '../config.js';
-import { DAY_MS, extendedExpiry, tariffBytes } from '../domain/rules.js';
-import type { AdminMessageRef, Order, PendingPayment, Tariff, TelegramId } from '../domain/types.js';
+import {
+  customPurchase,
+  DAY_MS,
+  extendedExpiry,
+  inboundsWith,
+  purchaseBytes,
+  purchaseTotal,
+  tariffPurchase,
+} from '../domain/rules.js';
+import type { AdminMessageRef, Order, PendingPayment, Plan, Purchase, Tariff, TelegramId } from '../domain/types.js';
 import type { StateStore } from '../infra/store.js';
 import type { ClientRepository } from './clients.js';
 
-/** Выбранный тариф ждёт чек не дольше суток. */
+/** Выбранная покупка ждёт чек не дольше суток. */
 const PENDING_TTL_MS = DAY_MS;
 
 export interface Customer {
@@ -48,8 +57,10 @@ export class ShopService {
     private readonly clients: ClientRepository,
   ) {}
 
+  // ---------- каталог ----------
+
   get enabled(): boolean {
-    return this.cfg.tariffs.length > 0 && !!this.cfg.paymentDetails && this.adminCount > 0;
+    return (this.cfg.tariffs.length > 0 || this.customEnabled) && !!this.cfg.paymentDetails && this.adminCount > 0;
   }
 
   get tariffs(): readonly Tariff[] {
@@ -60,8 +71,52 @@ export class ShopService {
     return this.cfg.paymentDetails;
   }
 
-  price(t: Tariff): string {
-    return `${t.price} ${this.cfg.currency}`;
+  /** «Свой срок»: от 1 до customMaxMonths месяцев по цене месяца. */
+  get customEnabled(): boolean {
+    return this.cfg.monthPrice > 0 && this.cfg.customMaxMonths > 0;
+  }
+
+  get monthPrice(): number {
+    return this.cfg.monthPrice;
+  }
+
+  get customMaxMonths(): number {
+    return this.cfg.customMaxMonths;
+  }
+
+  get whitelistEnabled(): boolean {
+    return this.cfg.whitelist.inboundIds.length > 0 && this.cfg.whitelist.monthPrice > 0;
+  }
+
+  get whitelistName(): string {
+    return this.cfg.whitelist.name;
+  }
+
+  get whitelistMonthPrice(): number {
+    return this.cfg.whitelist.monthPrice;
+  }
+
+  /** Расшифровка плана; null — такого тарифа/срока нет. */
+  resolve(plan: Plan): Purchase | null {
+    if (plan.kind === 'tariff') {
+      const t = this.cfg.tariffs[plan.index];
+      return t ? tariffPurchase(t) : null;
+    }
+    if (!this.customEnabled || plan.months < 1 || plan.months > this.cfg.customMaxMonths) return null;
+    return customPurchase(plan.months, this.cfg.monthPrice);
+  }
+
+  /** Доплата за white-list на срок покупки. */
+  whitelistCost(p: Purchase): number {
+    return this.cfg.whitelist.monthPrice * p.months;
+  }
+
+  total(p: Pick<PendingPayment, 'purchase' | 'whitelist'>): number {
+    return purchaseTotal(p.purchase, p.whitelist && this.whitelistEnabled, this.cfg.whitelist.monthPrice);
+  }
+
+  format(amount: number): string {
+    return `${amount.toLocaleString('ru-RU')} ${this.cfg.currency}`;
   }
 
   // ---------- пользователь ----------
@@ -76,18 +131,30 @@ export class ShopService {
   }
 
   /** targetEmail — продлеваемая подписка пользователя; null — новая. */
-  async startPayment(uid: TelegramId, tariffIndex: number, targetEmail: string | null): Promise<StartPaymentResult> {
-    const tariff = this.cfg.tariffs[tariffIndex];
-    if (!tariff || !this.enabled) return { kind: 'unavailable' };
+  async startPayment(uid: TelegramId, plan: Plan, targetEmail: string | null): Promise<StartPaymentResult> {
+    const purchase = this.resolve(plan);
+    if (!purchase || !this.enabled) return { kind: 'unavailable' };
     const waiting = this.openOrderOf(uid);
     if (waiting) return { kind: 'waiting', order: waiting };
+    let whitelist = false;
     if (targetEmail !== null) {
-      const own = await this.clients.byTgId(uid);
-      if (!own.some((c) => c.email === targetEmail)) return { kind: 'target_not_found' };
+      const target = (await this.clients.byTgId(uid)).find((c) => c.email === targetEmail);
+      if (!target) return { kind: 'target_not_found' };
+      // по умолчанию — как сейчас: у кого white-list подключён, переключатель включён
+      whitelist = this.hasWhitelist(target.inboundIds);
     }
-    const pending: PendingPayment = { tariff, target: targetEmail, at: Date.now() };
+    const pending: PendingPayment = { purchase, target: targetEmail, whitelist, at: Date.now() };
     this.store.setPending(uid, pending);
     return { kind: 'ok', pending };
+  }
+
+  /** Переключить white-list в текущей оплате. */
+  toggleWhitelist(uid: TelegramId): PendingPayment | null {
+    const p = this.pendingOf(uid);
+    if (!p || !this.whitelistEnabled) return p;
+    const next = { ...p, whitelist: !p.whitelist };
+    this.store.setPending(uid, next);
+    return next;
   }
 
   cancel(uid: TelegramId): void {
@@ -106,12 +173,15 @@ export class ShopService {
       this.store.setPending(customer.uid, null);
       return { kind: 'waiting', order: waiting };
     }
+    const whitelist = pending.whitelist && this.whitelistEnabled;
     const order = this.store.createOrder({
       uid: customer.uid,
       name: customer.name,
       username: customer.username,
-      tariff: pending.tariff,
+      purchase: pending.purchase,
       target: pending.target,
+      whitelist,
+      amount: this.total({ purchase: pending.purchase, whitelist }),
       fileUid: file.fileUid,
       fileInfo: file.info,
       comment,
@@ -167,32 +237,45 @@ export class ShopService {
     }
   }
 
+  // ---------- выполнение ----------
+
+  private hasWhitelist(inboundIds: readonly number[]): boolean {
+    return this.cfg.whitelist.inboundIds.some((id) => inboundIds.includes(id));
+  }
+
   private async fulfill(o: Order): Promise<{ email: string; expiryTime: number }> {
-    const totalBytes = tariffBytes(o.tariff);
+    const totalBytes = purchaseBytes(o.purchase);
+    const wl = this.cfg.whitelist.inboundIds;
+
     if (!o.target) {
       const base = (o.username ?? '').toLowerCase().replace(/[^a-z0-9_-]/g, '') || `tg${o.uid}`;
       const email = await this.clients.uniqueEmail(base);
-      const expiryTime = Date.now() + o.tariff.days * DAY_MS;
+      const expiryTime = Date.now() + o.purchase.days * DAY_MS;
+      const defaults = this.cfg.inboundIds.length ? this.cfg.inboundIds : await this.clients.enabledInboundIds();
       await this.clients.create({
         email,
         tgId: o.uid,
         expiryTime,
         totalBytes,
-        inboundIds: this.cfg.inboundIds.length ? this.cfg.inboundIds : await this.clients.enabledInboundIds(),
+        // white-list — только если оплачен
+        inboundIds: inboundsWith(defaults, wl, o.whitelist),
         limitIp: this.cfg.limitIp,
         group: this.cfg.group,
         comment: `Telegram, заявка №${o.id}`,
       });
       return { email, expiryTime };
     }
+
     const c = await this.clients.byEmail(o.target);
     if (!c) throw new Error(`Клиент ${o.target} не найден`);
-    const expiryTime = extendedExpiry(c.expiryTime, o.tariff);
+    const expiryTime = extendedExpiry(c.expiryTime, o.purchase);
     const changes: Record<string, unknown> = { enable: true };
     if (expiryTime !== c.expiryTime) changes.expiryTime = expiryTime;
     if (totalBytes) changes.totalGB = totalBytes;
     await this.clients.update(c.email, changes);
     if (totalBytes) await this.clients.resetTraffic(c.email);
+    // white-list: оплачен — подключаем, снят — отключаем (если опция настроена)
+    if (wl.length) await this.clients.setInbounds(c.email, c.inboundIds, inboundsWith(c.inboundIds, wl, o.whitelist));
     return { email: c.email, expiryTime };
   }
 }

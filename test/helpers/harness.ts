@@ -42,6 +42,8 @@ export function testConfig(env: Record<string, string> = {}): Config {
     NODE_NAMES: 'germany=🇩🇪 Германия',
     TARIFFS: '1 месяц|30|150',
     PAYMENT_DETAILS: 'Карта 0000',
+    WHITELIST_INBOUNDS: '3',
+    WHITELIST_PRICE: '100',
     ...env,
   });
 }

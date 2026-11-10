@@ -33,6 +33,13 @@ test('старый state.json: заявки дополняются новыми 
   const store = new StateStore(file);
   await store.load();
   const o = store.getOrder(1)!;
+  assert.deepEqual(
+    o.purchase,
+    { name: 'm', days: 30, months: 1, price: 1, gb: 0 },
+    'tariff → purchase, цена строкой → число',
+  );
+  assert.equal(o.whitelist, false);
+  assert.equal(o.amount, 1);
   assert.equal(o.fileUid, null);
   assert.equal(o.comment, null);
   assert.deepEqual(o.adminMsgs, [{ chat: 9, id: 5 }]);
@@ -44,7 +51,7 @@ test('старый state.json: заявки дополняются новыми 
 
 test('ожидание оплаты: установка и сброс', () => {
   const store = StateStore.inMemory();
-  const p = { tariff: { name: 'm', days: 30, price: '1', gb: 0 }, target: null, at: 1 };
+  const p = { purchase: { name: 'm', days: 30, months: 1, price: 1, gb: 0 }, target: null, whitelist: false, at: 1 };
   store.setPending(1, p);
   store.setPending(2, p);
   store.setPending(1, null);
