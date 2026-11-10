@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { extractSecrets } from '../src/links.js';
+import { extractSecrets } from '../../src/lib/links.js';
 
 const UUID = 'a1b2c3d4-e5f6-4711-8899-aabbccddeeff';
 
@@ -9,7 +9,7 @@ test('ссылка подписки', () => {
   assert.deepEqual(extractSecrets('вот моя ссылка: https://x.io/json/qwertyuiop12 спасибо'), ['qwertyuiop12']);
 });
 
-test('vless / trojan / hysteria2', () => {
+test('vless / trojan / hysteria2 / tuic', () => {
   assert.deepEqual(extractSecrets(`vless://${UUID}@1.2.3.4:443?type=tcp&security=reality#My%20VPN`), [UUID]);
   assert.deepEqual(extractSecrets('trojan://p%40ss@host:443?sni=x#t'), ['p@ss']);
   assert.deepEqual(extractSecrets('hysteria2://secretpw@host:443/?sni=x'), ['secretpw']);
@@ -30,7 +30,7 @@ test('shadowsocks', () => {
   assert.deepEqual(extractSecrets(`ss://${legacy}#x`), ['legacypw']);
 });
 
-test('голые UUID / subId, мусор и email не принимаются', () => {
+test('голые UUID / subId; мусор и email не принимаются', () => {
   assert.deepEqual(extractSecrets(UUID), [UUID]);
   assert.deepEqual(extractSecrets('k3j4h5g6f7d8'), ['k3j4h5g6f7d8']);
   assert.deepEqual(extractSecrets('привет'), []);
