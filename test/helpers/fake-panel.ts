@@ -62,7 +62,7 @@ const res = (status: number, body: unknown, cookies: string[] = []): FetchRespon
 });
 const ok = (obj?: unknown, cookies?: string[]) => res(200, { success: true, obj }, cookies);
 const fail = (msg: string) => res(200, { success: false, msg });
-const nginx404 = () => res(404, '<html>404 Not Found</html>');
+const nginx404 = () => res(404, '<html lang="en">404 Not Found</html>');
 
 export class FakePanel {
   rows: Row[];
